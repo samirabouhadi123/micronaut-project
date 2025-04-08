@@ -8,20 +8,14 @@ import jakarta.inject.Inject;
 @Controller
 public class ErrorController {
 
-
-
     @Inject
     public ErrorController() {
 
     }
 
-
     @Get("/error")
     public HttpResponse<String> getError() {
         throw new RuntimeException("Something went wrong!");
     }
-
-
-
 
 }

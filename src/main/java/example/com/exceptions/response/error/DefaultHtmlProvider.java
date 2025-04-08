@@ -122,7 +122,7 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
         String header = "<h1>" + errorTitle + "</h1>";
         header += "<h2>" + htmlErrorPage.httpStatusCode() + "</h1>";
 
-        String stackTraceHtml = generateStackTrace(errorContext);
+        String stackTraceHtml = getStackTrace(errorContext);
 
         return MessageFormat.format("<!doctype html><html lang=\"en\"><head><title>{0} — {1}</title><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"initial-scale=1, width=device-width\"><meta name=\"robots\" content=\"noindex, nofollow\"><style>{2}</style></head><body><main><header>{3}</header><article>{4}{5}</article></main></body></html>",
                 htmlErrorPage.httpStatusCode(),
@@ -133,7 +133,7 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
                 stackTraceHtml);
     }
 
-    public static String generateStackTrace(ErrorContext errorContext) {
+    public static String getStackTrace(ErrorContext errorContext) {
         if (errorContext == null) {
             return null;
         }
@@ -143,8 +143,19 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
         }
         final StringWriter stringWriter = new StringWriter();
         exception.get().printStackTrace(new PrintWriter(stringWriter));
+        // Filter out framework internals
 
-        return stringWriter.toString().trim();
+        String[] lines = stringWriter.toString().split("\n");
+        StringBuilder filteredStackTrace = new StringBuilder();
+        for (String line : lines) {
+            if (!line.contains("io.micronaut")) {
+                filteredStackTrace.append(line).append("\n");
+            }
+        }
+
+        return "<div style='outline: 50px solid transparent; padding: 10px; overflow-x: auto; max-width: 80%;'><pre style='font-size: 15px;'>" +
+                filteredStackTrace.toString().replace("\n", "<br>") +
+                "</pre></div>";
     }
 
     private HtmlErrorPage error(ErrorContext errorContext, HttpResponse<?> response) {
