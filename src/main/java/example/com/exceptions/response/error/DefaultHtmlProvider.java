@@ -2,6 +2,7 @@ package example.com.exceptions.response.error;
 
 import io.micronaut.context.MessageSource;
 import io.micronaut.context.annotation.Primary;
+import io.micronaut.context.annotation.Value;
 import io.micronaut.core.annotation.NonNull;
 import io.micronaut.core.util.LocaleResolver;
 import io.micronaut.http.HttpRequest;
@@ -20,6 +21,9 @@ import static io.micronaut.http.HttpStatus.*;
 @Singleton
 @Primary
 class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
+
+    @Value("${filter.prefix}")
+    protected String filterPrefix;
 
     private static final Map<Integer, String> DEFAULT_ERROR_BOLD = Map.of(
             NOT_FOUND.getCode(), "the page is not available",
@@ -133,7 +137,8 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
                 stackTraceHtml);
     }
 
-    public static String getStackTrace(ErrorContext errorContext) {
+    public String getStackTrace(ErrorContext errorContext) {
+
         if (errorContext == null) {
             return null;
         }
@@ -148,13 +153,13 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
         String[] lines = stringWriter.toString().split("\n");
         StringBuilder filteredStackTrace = new StringBuilder();
         for (String line : lines) {
-            if (!line.contains("io.micronaut")) {
+            if (!line.contains(filterPrefix)) {
                 filteredStackTrace.append(line).append("\n");
             }
         }
 
         return "<div style='outline: 50px solid transparent; padding: 10px; overflow-x: auto; max-width: 80%;'><pre style='font-size: 15px;'>" +
-                filteredStackTrace.toString().replace("\n", "<br>") +
+                filteredStackTrace +
                 "</pre></div>";
     }
 
