@@ -12,8 +12,10 @@ import io.micronaut.http.server.exceptions.response.HtmlErrorResponseBodyProvide
 import io.micronaut.http.util.HtmlSanitizer;
 import jakarta.inject.Singleton;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.text.MessageFormat;
 import java.util.*;
 import static io.micronaut.http.HttpStatus.*;
@@ -22,8 +24,10 @@ import static io.micronaut.http.HttpStatus.*;
 @Primary
 class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
 
-    @Value("${filter.prefix}")
-    protected String filterPrefix;
+    @Value("${filter.prefix.micronaut}")
+    protected String filterPrefixMicronaut;
+    @Value("${filter.prefix.netty}")
+    protected String filterPrefixNetty;
 
     private static final Map<Integer, String> DEFAULT_ERROR_BOLD = Map.of(
             NOT_FOUND.getCode(), "the page is not available",
@@ -120,7 +124,7 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
         this.localeResolver = localeResolver;
     }
 
-    private String html(@NonNull HtmlErrorPage htmlErrorPage, ErrorContext errorContext) {
+    private String html(@NonNull HtmlErrorPage htmlErrorPage, ErrorContext errorContext) throws IOException {
         final String errorTitleCode = htmlErrorPage.httpStatusCode() + ".error.title";
         final String errorTitle = messageSource.getMessage(errorTitleCode, htmlErrorPage.httpStatusReason(), htmlErrorPage.locale());
         String header = "<h1>" + errorTitle + "</h1>";
@@ -137,7 +141,7 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
                 stackTraceHtml);
     }
 
-    public String getStackTrace(ErrorContext errorContext) {
+    public String getStackTrace(ErrorContext errorContext) throws IOException {
 
         if (errorContext == null) {
             return null;
@@ -146,22 +150,30 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
         if (exception.isEmpty()) {
             return null;
         }
+
+        // Get the code snippet
+        String codeSnippet = getCodeSnippet(errorContext);
         final StringWriter stringWriter = new StringWriter();
         exception.get().printStackTrace(new PrintWriter(stringWriter));
-        // Filter out framework internals
 
+        // Filter out framework internals
         String[] lines = stringWriter.toString().split("\n");
         StringBuilder filteredStackTrace = new StringBuilder();
+
         for (String line : lines) {
-            if (!line.contains(filterPrefix)) {
+            if (!(line.contains(filterPrefixMicronaut) || line.contains(filterPrefixNetty))) {
                 filteredStackTrace.append(line).append("\n");
             }
         }
 
+        // Combine the stack trace and code snippet
+        String combinedOutput = filteredStackTrace + "\n\nCode Snippet:\n" + codeSnippet;
+
         return "<div style='outline: 50px solid transparent; padding: 10px; overflow-x: auto; max-width: 80%;'><pre style='font-size: 15px;'>" +
-                filteredStackTrace +
+                combinedOutput +
                 "</pre></div>";
     }
+
 
     private HtmlErrorPage error(ErrorContext errorContext, HttpResponse<?> response) {
         int httpStatusCode = response.code();
@@ -206,7 +218,11 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
     @Override
     public String body(ErrorContext errorContext, HttpResponse<?> response) {
         HtmlErrorPage key = error(errorContext, response);
-        return html(key, errorContext);
+        try {
+            return html(key, errorContext);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private record HtmlErrorPage(Locale locale,
@@ -214,6 +230,72 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
                                  String httpStatusReason,
                                  String error,
                                  String errorBold
-                                ) {
+    ) {
     }
+    //
+    private String getFullPath(String className) {
+        int lastDotIndex = className.lastIndexOf(".");
+        if (lastDotIndex > 0) {
+            String packageName = className.substring(0, lastDotIndex).replace('.', '/');
+            return packageName;
+        } else {
+            return "";
+        }
+    }
+
+    private String getCodeSnippet(ErrorContext errorContext) throws IOException {
+
+        Throwable rootCause = errorContext.getRootCause().get();
+
+
+        StackTraceElement[] stackTraceElements = rootCause.getStackTrace();
+
+        if (stackTraceElements == null || stackTraceElements.length == 0) {
+            throw new IllegalStateException("No stack trace elements found.");
+        }
+
+        StringBuilder codeSnippets = new StringBuilder();
+
+        for (StackTraceElement stackTraceElement : stackTraceElements) {
+            if (stackTraceElement.getFileName() == null) {
+                continue;
+            }
+            if (stackTraceElement.getClassName().contains(filterPrefixMicronaut) || stackTraceElement.getClassName().contains(filterPrefixNetty)) {
+                continue;
+            }
+
+
+            int lineNumber = stackTraceElement.getLineNumber();
+
+            String packageName = getFullPath(stackTraceElement.getClassName());
+
+            String path = "src/main/java/" + packageName + "/" + stackTraceElement.getFileName();
+            Path filePath = Paths.get(System.getProperty("user.dir"), path);
+
+            try {
+
+                List<String> lines = Files.readAllLines(filePath);
+
+
+                StringBuilder codeSnippet = new StringBuilder();
+
+                int startIndex = Math.max(0, lineNumber - 5);
+                int endIndex = Math.min(lines.size(), lineNumber + 5);
+
+                for (int i = startIndex; i < endIndex; i++) {
+                    String line = lines.get(i);
+                    codeSnippet.append(line).append("\n");
+                }
+
+                codeSnippets.append("Exception at ").append(stackTraceElement.getClassName()).append(":").append(lineNumber).append("\n")
+                        .append(codeSnippet.toString()).append("\n\n");
+
+            } catch (IOException e) {
+                codeSnippets.append("Failed to read file: ").append(filePath).append("\n\n");
+            }
+        }
+
+        return codeSnippets.toString();
+    }
+
 }
