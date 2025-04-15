@@ -81,7 +81,7 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
                 font-size: 2em;
                 color: #333;
                 margin-bottom: 0.5em;
-            }  
+            }
             h2 {
                 font-size: 5.5em;
                 opacity: 0.3;
@@ -483,6 +483,7 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
         return new HtmlErrorPage(locale, httpStatusCode, httpStatusReason, error, errorBold);
     }
 
+
     private Optional<StackTraceElement> parseStackTraceLine(String line) {
         try {
             if (!line.startsWith("at ")) return Optional.empty();
@@ -510,48 +511,58 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
         }
     }
 
-    private String getCodeSnippetFromElement(StackTraceElement element) {
-        try {
-            String className = element.getClassName();
-            int lineNumber = element.getLineNumber();
-            if (lineNumber < 0) return null;
+ private String getCodeSnippetFromElement(StackTraceElement element) {
+     try {
+         String className = element.getClassName();
+         int lineNumber = element.getLineNumber();
+         if (lineNumber < 0) return null;
 
-            Path path = getPathFromClass(className);
+         Path path = getPathFromClass(className);
 
-            if (Files.exists(path)) {
-                List<String> lines = Files.readAllLines(path);
-                int startIndex = Math.max(0, lineNumber - 3);
-                int endIndex = Math.min(lines.size(), lineNumber + 3);
+         if (Files.exists(path)) {
+             try (BufferedReader reader = Files.newBufferedReader(path)) {
+                 String line;
+                 int currentLine = 1;
+                 StringBuilder codeSnippet = new StringBuilder();
+                 boolean foundStartIndex = false;
 
-                StringBuilder codeSnippet = new StringBuilder();
-                codeSnippet.append("<div class=\"code-snippet\">");
-                codeSnippet.append("<div style=\"margin-bottom:5px;\"><strong>")
-                        .append(path.getFileName())
-                        .append("</strong></div>");
+                 codeSnippet.append("<div class=\"code-snippet\">");
+                 codeSnippet.append("<div style=\"margin-bottom:5px;\"><strong>")
+                         .append(path.getFileName())
+                         .append("</strong></div>");
 
-                for (int i = startIndex; i < endIndex; i++) {
-                    String line = lines.get(i);
-                    if (i + 1 == lineNumber) {
-                        codeSnippet.append("<div class=\"highlighted-line\">");
-                    } else {
-                        codeSnippet.append("<div class=\"code-line\">");
-                    }
-                    codeSnippet.append("<span class=\"line-number\">")
-                            .append(String.format("%d", i + 1))
-                            .append("</span> ")
-                            .append(line)
-                            .append("</div>");
-                }
-                codeSnippet.append("</div>\n\n");
-                return codeSnippet.toString();
-            }
-        } catch (Exception ignored) {
+                 while ((line = reader.readLine()) != null) {
+                     if (currentLine >= lineNumber - 3 && !foundStartIndex) {
+                         foundStartIndex = true;
+                     }
 
-        }
-        return null;
-    }
+                     if (foundStartIndex) {
+                         if (currentLine == lineNumber) {
+                             codeSnippet.append("<div class=\"highlighted-line\">");
+                         } else {
+                             codeSnippet.append("<div class=\"code-line\">");
+                         }
+                         codeSnippet.append("<span class=\"line-number\">")
+                                 .append(String.format("%d", currentLine))
+                                 .append("</span> ")
+                                 .append(line)
+                                 .append("</div>");
+                     }
 
+                     currentLine++;
+                 }
 
+                 codeSnippet.append("</div>\n\n");
+                 return codeSnippet.toString();
+             }
+         }
+     } catch (Exception ignored) {
+
+     }
+     return null;
+ }
+
+//get Path of file by className
     private Path getPathFromClass(String className) {
         String relativePath = className.replace('.', '/') + ".java";
         return Paths.get("src/main/java", relativePath);
