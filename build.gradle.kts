@@ -5,31 +5,39 @@ plugins {
 }
 
 version = "0.1"
-group = "hello.world"
+group = "example.com"
 
 repositories {
     mavenCentral()
 }
 
 dependencies {
+    testAnnotationProcessor ("io.micronaut:micronaut-inject-java")
     annotationProcessor("io.micronaut.data:micronaut-data-processor")
     annotationProcessor("io.micronaut:micronaut-http-validation")
-    annotationProcessor("io.micronaut.serde:micronaut-serde-processor")
+    annotationProcessor("io.micronaut.serde:micronaut-serde-processor")//enables serialization/deserialization in micronaut apps
+    //micronaut serialisation
     implementation("io.micronaut.serde:micronaut-serde-jackson")
-    implementation("org.slf4j:jul-to-slf4j")
-    implementation("io.micronaut:micronaut-http")
     implementation("io.micronaut:micronaut-http-server-netty")
+    implementation("io.micronaut:micronaut-http")
     compileOnly("io.micronaut:micronaut-http-client")
     runtimeOnly("ch.qos.logback:logback-classic")
-    runtimeOnly("com.h2database:h2")
-    testImplementation("io.micronaut:micronaut-http-client")
-    testImplementation("org.junit.platform:junit-platform-suite-engine")
+    testImplementation ("io.micronaut.test:micronaut-test-spock")
+    testImplementation("io.micronaut.test:micronaut-test-spock")
+    testImplementation("org.spockframework:spock-core") {
+        exclude(group = "org.codehaus.groovy", module = "groovy-all")
+    }
+    testImplementation("org.junit.jupiter:junit-jupiter-api")
+    testImplementation("org.junit.jupiter:junit-jupiter-params:5.8.2")
+    testImplementation("io.micronaut.test:micronaut-test-junit5")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
+    testImplementation("org.junit.jupiter:junit-jupiter-engine")
 }
 
 
 
 application {
-    mainClass = "hello.world.Application"
+    mainClass = "example.com.exceptions.response.error.Application"
 }
 java {
     sourceCompatibility = JavaVersion.toVersion("21")
@@ -44,13 +52,13 @@ micronaut {
     testRuntime("junit5")
     processing {
         incremental(true)
-        annotations("hello.world.*")
+        annotations("example.com.*")
     }
     aot {
         // Please review carefully the optimizations enabled below
         // Check https://micronaut-projects.github.io/micronaut-aot/latest/guide/ for more details
         optimizeServiceLoading = false
-        convertYamlToJava = false
+        convertYamlToJava = true
         precomputeOperations = true
         cacheEnvironment = true
         optimizeClassLoading = true

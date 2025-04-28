@@ -7,9 +7,12 @@ import io.micronaut.core.annotation.NonNull;
 import io.micronaut.core.util.LocaleResolver;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.hateoas.JsonError;
 import io.micronaut.http.server.exceptions.response.ErrorContext;
 import io.micronaut.http.server.exceptions.response.HtmlErrorResponseBodyProvider;
+import io.micronaut.http.server.exceptions.response.JsonErrorResponseBodyProvider;
 import io.micronaut.http.util.HtmlSanitizer;
+import io.micronaut.serde.ObjectMapper;
 import jakarta.inject.Singleton;
 
 import java.io.*;
@@ -23,8 +26,7 @@ import static io.micronaut.http.HttpStatus.*;
 
 @Singleton
 @Primary
-class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
-
+public class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
 
     @Value("${filter.prefix.micronaut}")
     protected String filterPrefixMicronaut;
@@ -32,6 +34,8 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
     @Value("${filter.prefix.netty}")
     protected String filterPrefixNetty;
 
+    @Value("${filter.unknown.source:Unknown Source}")
+    protected String filterUnknownSource;
 
     @Value("${micronaut.environment:development}")
     protected String environment;
@@ -121,8 +125,7 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
               background-color: #f5f7fa;
               border-radius: 8px;
               box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-              width: 90%;
-              max-width: 50em;
+              width: 75%;
               margin: 2em;
             }
             main header {
@@ -148,11 +151,22 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
               text-align: left;
               font-family: 'Courier New', Courier, monospace;
             }
-            .stacktrace-container {
+            .stacktrace-container, .code-container, .request-container {
               margin-top: 1em;
-              border: 1px solid #ddd;
+              border: 2px solid #ddd;
               border-radius: 4px;
               overflow: hidden;
+              margin-bottom: 1em;
+            }
+            .section-header {
+              background: #f5f5f5;
+              padding: 10px 15px;
+              border-bottom: 1px solid #ddd;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              font-size: 1.1em;
+              font-weight: 500;
             }
             .stacktrace-header {
               background: #f5f5f5;
@@ -163,12 +177,11 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
               justify-content: space-between;
               align-items: center;
             }
-            .stacktrace-content {
+            .stacktrace-content, .code-content {
               padding: 15px;
               background: #fff;
               overflow-x: auto;
-              max-height: 500px;
-              overflow-y: auto;
+              display: none;
             }
             .code-box {
               background-color: #f8f8f8;
@@ -212,12 +225,10 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
               user-select: none;
             }
             .request-info {
-              background: #f5f5f5;
               padding: 15px;
               border-radius: 5px;
               margin-top: 10px;
               margin-bottom: 10px;
-              border: 1px solid #ddd;
             }
             .request-info h3 {
               margin-top: 0;
@@ -228,11 +239,6 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
               margin: 5px 0;
               font-family: monospace;
             }
-            .language-java .keyword { color: #0033b3; }
-            .language-java .string { color: #067d17; }
-            .language-java .comment { color: #8c8c8c; font-style: italic; }
-            .language-java .number { color: #1750eb; }
-            .language-java .method { color: #7a3e9d; }
             .button {
               padding: 5px 10px;
               background: #4A90E2;
@@ -250,62 +256,176 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
             .copy-button {
               float: right;
             }
+            .switch {
+              position: relative;
+              display: inline-block;
+              width: 50px;
+              height: 24px;
+              margin-left: 10px;
+            }
+            .switch input {
+              opacity: 0;
+              width: 0;
+              height: 0;
+            }
+            .slider {
+              position: absolute;
+              cursor: pointer;
+              top: 0;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              background-color: #ccc;
+              transition: .4s;
+              border-radius: 24px;
+            }
+            .slider:before {
+              position: absolute;
+              content: "";
+              height: 16px;
+              width: 16px;
+              left: 4px;
+              bottom: 4px;
+              background-color: white;
+              transition: .4s;
+              border-radius: 50%;
+            }
+            input:checked + .slider {
+              background-color: #4A90E2;
+            }
+            input:checked + .slider:before {
+              transform: translateX(26px);
+            }
+            .filter-label {
+              font-size: 14px;
+              margin-right: 10px;
+            }
+            .filter-toggle {
+              display: flex;
+              align-items: center;
+              margin-left: auto;
+            }
+            .error-section, .source-code-section, .exception-section {
+              margin-bottom: 20px;
+            }
+            .file-name {
+              font-weight: bold;
+              margin-bottom: 5px;
+              color: #333;
+            }
+            .json-response-section {
+              margin-top: 1em;
+              margin-bottom: 1em;
+            }
+            .json-response-section pre {
+              white-space: pre-wrap;
+              word-wrap: break-word;
+              overflow-x: auto;
+              max-width: 100%;
+              background-color: #f8f8f8;
+              padding: 10px;
+              border-radius: 4px;
+              border: 1px solid #ddd;
+            }
     """;
 
     private static final String JAVASCRIPT = """
-            document.addEventListener('DOMContentLoaded', function() {
-                const collapsibles = document.querySelectorAll('.collapsible');
-                collapsibles.forEach(function(collapsible) {
-                    collapsible.addEventListener('click', function() {
-                        this.classList.toggle('active');
-                        const content = this.nextElementSibling;
-                        if (content.style.maxHeight) {
-                            content.style.maxHeight = null;
-                            this.querySelector('.toggle-icon').textContent = '▼';
-                        } else {
-                            content.style.maxHeight = content.scrollHeight + 'px';
-                            this.querySelector('.toggle-icon').textContent = '▲';
-                        }
-                    });
-                });
-                // Add click event for copy button
-                document.querySelectorAll('.copy-button').forEach(function(button) {
-                    button.addEventListener('click', function(e) {
-                        e.stopPropagation();
-                        const textToCopy = this.closest('.stacktrace-container').querySelector('.stacktrace-content').innerText;
-                        navigator.clipboard.writeText(textToCopy).then(function() {
-                            const originalText = button.innerText;
-                            button.innerText = 'Copied!';
-                            setTimeout(function() {
-                                button.innerText = originalText;
-                            }, 2000);
-                        });
+        document.addEventListener('DOMContentLoaded', function() {
+            const filterToggle = document.getElementById('filter-toggle');
+            if (filterToggle) {
+              filterToggle.addEventListener('change', function () {
+                const filteredStackTrace = document.getElementById('filtered-stack-trace');
+                const fullStackTrace = document.getElementById('full-stack-trace');
+                if (this.checked) {
+                  fullStackTrace.style.display = 'block';
+                  filteredStackTrace.style.display = 'none';
+                  expandStackTrace(fullStackTrace);
+                } else {
+                  filteredStackTrace.style.display = 'block';
+                  fullStackTrace.style.display = 'none';
+                  expandStackTrace(filteredStackTrace);
+                }
+              });
+            }
+            function expandStackTrace(stackTraceElement) {
+              const headerElement = stackTraceElement.querySelector('.stacktrace-header.collapsible');
+              const contentElement = stackTraceElement.querySelector('.stacktrace-content');
+              if (headerElement && contentElement) {
+                headerElement.classList.add('active');
+                contentElement.style.display = 'block';
+                const toggleIcon = headerElement.querySelector('.toggle-icon');
+                if (toggleIcon) toggleIcon.textContent = '▲';
+              }
+            }
+            document.querySelectorAll('.copy-button').forEach(function(button) {
+                button.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const textToCopy = this.closest('.stacktrace-container').querySelector('.stacktrace-content').innerText;
+                    navigator.clipboard.writeText(textToCopy).then(function() {
+                        const originalText = button.innerText;
+                        button.innerText = 'Copied!';
+                        setTimeout(function() {
+                            button.innerText = originalText;
+                        }, 2000);
                     });
                 });
             });
+            document.querySelectorAll('.collapsible').forEach(function(header) {
+                header.addEventListener('click', function() {
+                    const content = this.nextElementSibling;
+                    const toggleIcon = this.querySelector('.toggle-icon');
+                    if (content.style.display === 'none' || content.style.display === '') {
+                        content.style.display = 'block';
+                        if (toggleIcon) toggleIcon.textContent = '▲';
+                    } else {
+                        content.style.display = 'none';
+                        if (toggleIcon) toggleIcon.textContent = '▼';
+                    }
+                });
+            });
+        });
     """;
 
     private final HtmlSanitizer htmlSanitizer;
     private final MessageSource messageSource;
     private final LocaleResolver<HttpRequest<?>> localeResolver;
+    private final ObjectMapper objectMapper;
+    private final JsonErrorResponseBodyProvider<JsonError> jsonErrorResponseBodyProvider;
 
     DefaultHtmlProvider(HtmlSanitizer htmlSanitizer,
                         MessageSource messageSource,
-                        LocaleResolver<HttpRequest<?>> localeResolver) {
+                        LocaleResolver<HttpRequest<?>> localeResolver,
+                        ObjectMapper objectMapper,
+                        JsonErrorResponseBodyProvider<JsonError> jsonErrorResponseBodyProvider) {
         this.htmlSanitizer = htmlSanitizer;
         this.messageSource = messageSource;
         this.localeResolver = localeResolver;
+        this.objectMapper = objectMapper;
+        this.jsonErrorResponseBodyProvider = jsonErrorResponseBodyProvider;
     }
 
-    private String html(@NonNull HtmlErrorPage htmlErrorPage, ErrorContext errorContext) throws IOException {
+    @Override
+    public String body(ErrorContext errorContext, HttpResponse<?> response) {
+        HtmlErrorPage key = error(errorContext, response);
+        try {
+            return html(key, errorContext, response);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private String html(@NonNull HtmlErrorPage htmlErrorPage, ErrorContext errorContext, HttpResponse<?> response) throws IOException {
         final String errorTitleCode = htmlErrorPage.httpStatusCode() + ".error.title";
         final String errorTitle = messageSource.getMessage(errorTitleCode, htmlErrorPage.httpStatusReason(), htmlErrorPage.locale());
 
-        String header = "<h1>" + errorTitle + "</h1>";
-        header += "<h2>" + htmlErrorPage.httpStatusCode() + "</h2>";
+        String header = "<h1>" + errorTitle + "</h1><h2>" + htmlErrorPage.httpStatusCode() + "</h2>";
 
-        String stackTraceHtml = getStackTrace(errorContext);
-        String requestInfoHtml = getRequestInfo(errorContext);
+        boolean isProduction = "production".equalsIgnoreCase(environment);
+
+        String sourceCodeHtml = isProduction ? "" : buildSourceCodeSection(extractCodeSnippets(errorContext));
+        String stackTraceHtml = isProduction ? "" : buildStackTraceSection(errorContext);
+        String requestInfoHtml = buildRequestInfoSection(errorContext);
+        String jsonResponseHtml = isProduction ? "" : buildJsonResponseSection(errorContext, response);
 
         return MessageFormat.format("""
                 <!doctype html>
@@ -324,6 +444,8 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
                         <article>{5}</article>
                         {6}
                         {7}
+                        {8}
+                        {9}
                     </main>
                 </body>
                 </html>
@@ -334,163 +456,204 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
                 JAVASCRIPT,
                 header,
                 article(htmlErrorPage),
+                sourceCodeHtml,
+                stackTraceHtml,
                 requestInfoHtml,
-                "production".equalsIgnoreCase(environment) ? "" : stackTraceHtml
+                jsonResponseHtml
         );
     }
 
-    private String getRequestInfo(ErrorContext errorContext) {
-        if (errorContext == null || errorContext.getRequest() == null) {
-            return "";
-        }
+    private HtmlErrorPage error(ErrorContext errorContext, HttpResponse<?> response) {
+        int httpStatusCode = response.code();
+        Locale locale = localeResolver.resolveOrDefault(errorContext.getRequest());
 
-        HttpRequest<?> request = errorContext.getRequest();
-        StringBuilder sb = new StringBuilder();
+        String errorBold = getMessage(httpStatusCode + ".error.bold", DEFAULT_ERROR_BOLD.get(httpStatusCode), locale);
+        String error = getMessage(httpStatusCode + ".error", DEFAULT_ERROR.get(httpStatusCode), locale);
+        String httpStatusReason = htmlSanitizer.sanitize(response.reason());
 
-        sb.append("<div class=\"request-info\">");
-        sb.append("<h3>Request Information</h3>");
-
-        sb.append("<div class=\"request-info-item\"><strong>Method:</strong> ")
-                .append(request.getMethod())
-                .append("</div>");
-
-        sb.append("<div class=\"request-info-item\"><strong>URL:</strong> ")
-                .append(request.getUri().toString())
-                .append("</div>");
-
-        sb.append("<div class=\"stacktrace-header collapsible\">")
-                .append("Headers <span class=\"toggle-icon\">▼</span>")
-                .append("</div>");
-
-        sb.append("<div class=\"stacktrace-content\" style=\"max-height: 0; overflow: hidden;\">");
-        request.getHeaders().forEach((name, values) -> {
-            sb.append("<div class=\"request-info-item\">")
-                    .append(name)
-                    .append(": ")
-                    .append(String.join(", ", values))
-                    .append("</div>");
-        });
-        sb.append("</div>");
-
-        sb.append("</div>");
-
-        return sb.toString();
+        return new HtmlErrorPage(locale, httpStatusCode, httpStatusReason, error, errorBold);
     }
 
-    public String getStackTrace(ErrorContext errorContext) throws IOException {
-        if (errorContext == null) return "";
+    private String getMessage(String code, String defaultMessage, Locale locale) {
+        return defaultMessage != null
+                ? messageSource.getMessage(code, defaultMessage, locale)
+                : messageSource.getMessage(code, locale).orElse(null);
+    }
+
+    private List<CodeSnippet> extractCodeSnippets(ErrorContext errorContext) {
+        List<CodeSnippet> snippets = new ArrayList<>();
+        if (errorContext == null) return snippets;
+
         Optional<Throwable> exception = errorContext.getRootCause();
-        if (exception.isEmpty()) return "";
+        if (exception.isEmpty()) return snippets;
 
-        StringWriter stringWriter = new StringWriter();
-        exception.get().printStackTrace(new PrintWriter(stringWriter));
-        String stackTraceText = stringWriter.toString();
-        String[] lines = stackTraceText.split("\n");
+        String stackTraceText = getStackTraceAsString(exception.get());
+        Set<String> processedFiles = new HashSet<>();
 
-        StringBuilder stackTraceHtml = new StringBuilder();
-        stackTraceHtml.append("<div class=\"stacktrace-container\">");
+        for (String line : stackTraceText.split("\n")) {
+            if (shouldFilterLine(line)) continue;
 
-        stackTraceHtml.append("<div class=\"stacktrace-header collapsible\">")
-                .append("Stack Trace: ")
-                .append(htmlSanitizer.sanitize(exception.get().toString()))
-                .append(" <span class=\"toggle-icon\">▼</span>")
-                .append("<button class=\"button copy-button\">Copy</button>")
-                .append("</div>");
-
-        stackTraceHtml.append("<div class=\"stacktrace-content\" style=\"max-height: 0; overflow: hidden;\">");
-
-        List<String> processedLines = new ArrayList<>();
-        for (String line : lines) {
-            // Skip filtered packages
-            if (line.contains(filterPrefixMicronaut) || line.contains(filterPrefixNetty)) {
-                continue;
-            }
-
-            processedLines.add(line);
-
-            // Check if we can add a code snippet
             Optional<StackTraceElement> maybeElement = parseStackTraceLine(line.trim());
             if (maybeElement.isPresent()) {
                 StackTraceElement element = maybeElement.get();
-                String snippet = getCodeSnippetFromElement(element);
-                if (snippet != null && !snippet.isBlank()) {
-                    processedLines.add(snippet);
+                String fileLineKey = element.getClassName() + ":" + element.getLineNumber();
+
+                if (!processedFiles.contains(fileLineKey)) {
+                    String codeSnippet = getCodeFromElement(element);
+                    if (codeSnippet != null && !codeSnippet.isEmpty()) {
+                        snippets.add(new CodeSnippet(
+                                element.getClassName(),
+                                getFileNameFromClass(element.getClassName()),
+                                element.getLineNumber(),
+                                codeSnippet
+                        ));
+                        processedFiles.add(fileLineKey);
+                    }
                 }
             }
         }
 
-        for (String line : processedLines) {
-            if (line.startsWith("<div class=\"code-snippet\"") || line.endsWith("</div>\n\n")) {
-                stackTraceHtml.append(line);
-            } else {
-                stackTraceHtml.append("<div class=\"stack-line\">")
-                        .append(htmlSanitizer.sanitize(line))
-                        .append("</div>");
-            }
+        return snippets;
+    }
+
+    private String getStackTraceAsString(Throwable exception) {
+        StringWriter stringWriter = new StringWriter();
+        exception.printStackTrace(new PrintWriter(stringWriter));
+        return stringWriter.toString();
+    }
+
+    private boolean shouldFilterLine(String line) {
+        return line.contains(filterPrefixMicronaut) ||
+                line.contains(filterPrefixNetty) ||
+                line.contains(filterUnknownSource);
+    }
+
+    private String getFileNameFromClass(String className) {
+        int lastDot = className.lastIndexOf('.');
+        if (lastDot > 0 && lastDot < className.length() - 1) {
+            return className.substring(lastDot + 1) + ".java";
+        }
+        return className + ".java";
+    }
+
+    private String buildSourceCodeSection(List<CodeSnippet> codeSnippets) {
+        if (codeSnippets.isEmpty()) return "";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("<div class=\"source-code-section\">")
+                .append("<div class=\"code-container\">")
+                .append("<div class=\"stacktrace-header collapsible\">Source Code <span class=\"toggle-icon\">▼</span></div>")
+                .append("<div class=\"code-content\">");
+
+        for (CodeSnippet snippet : codeSnippets) {
+            sb.append("<div class=\"code-snippet\">")
+                    .append("<div class=\"file-name\">").append(snippet.fileName()).append("</div>")
+                    .append(snippet.codeHtml())
+                    .append("</div>");
         }
 
-        stackTraceHtml.append("</div></div>");
+        sb.append("</div></div></div>");
+        return sb.toString();
+    }
 
-        return stackTraceHtml.toString();
+    private String buildRequestInfoSection(ErrorContext errorContext) {
+        if (errorContext == null || errorContext.getRequest() == null) return "";
+
+        HttpRequest<?> request = errorContext.getRequest();
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("<div class=\"error-section\">")
+                .append("<div class=\"request-container\">")
+                .append("<div class=\"section-header\">Request Information</div>")
+                .append("<div class=\"request-info\">")
+                .append("<div class=\"request-info-item\"><strong>Method:</strong> ").append(request.getMethod()).append("</div>")
+                .append("<div class=\"request-info-item\"><strong>URL:</strong> ").append(request.getUri().toString()).append("</div>")
+                .append("<div class=\"stacktrace-header collapsible\">Headers <span class=\"toggle-icon\">▼</span></div>")
+                .append("<div class=\"stacktrace-content\">");
+
+        request.getHeaders().forEach((name, values) -> {
+            sb.append("<div class=\"request-info-item\">")
+                    .append(name).append(": ").append(String.join(", ", values))
+                    .append("</div>");
+        });
+
+        sb.append("</div></div></div></div>");
+        return sb.toString();
+    }
+
+    private String buildStackTraceSection(ErrorContext errorContext) {
+        if (errorContext == null) return "";
+        Optional<Throwable> exception = errorContext.getRootCause();
+        if (exception.isEmpty()) return "";
+
+        return "<div class=\"exception-section\">" +
+                createStackTraceContainer(exception.get(), false) +
+                createStackTraceContainer(exception.get(), true) +
+                "</div>";
+    }
+
+    private String createStackTraceContainer(Throwable exception, boolean showFullStackTrace) {
+        String exceptionInfo = exception.getClass().getName() +
+                (exception.getMessage() != null ? ": " + exception.getMessage() : "");
+        String containerId = showFullStackTrace ? "full-stack-trace" : "filtered-stack-trace";
+        String initialStyle = showFullStackTrace ? "display: none;" : "";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("<div id=\"").append(containerId).append("\" class=\"stacktrace-container\" style=\"")
+                .append(initialStyle).append("\">")
+                .append("<div class=\"stacktrace-header collapsible\">")
+                .append("Stack Trace: ").append(exceptionInfo);
+
+        if (!showFullStackTrace) {
+            sb.append("<div>")
+                    .append("<span class=\"filter-label\">Show Full Stack:</span>")
+                    .append("<label class=\"switch\">")
+                    .append("<input type=\"checkbox\" id=\"filter-toggle\">")
+                    .append("<span class=\"slider\"></span>")
+                    .append("</label>")
+                    .append("</div>");
+        }
+
+        sb.append("<span class=\"toggle-icon\">▼</span>")
+                .append("<button class=\"button copy-button\">Copy</button>")
+                .append("</div>")
+                .append("<div class=\"stacktrace-content\">");
+
+        String stackTraceText = getStackTraceAsString(exception);
+        for (String line : stackTraceText.split("\n")) {
+            if (!showFullStackTrace && shouldFilterLine(line)) continue;
+
+            sb.append("<div class=\"stack-line\">")
+                    .append(htmlSanitizer.sanitize(line))
+                    .append("</div>");
+        }
+
+        sb.append("</div></div>");
+        return sb.toString();
     }
 
     private String article(@NonNull HtmlErrorPage htmlErrorPage) {
         StringBuilder sb = new StringBuilder();
-
-        String error = htmlErrorPage.error();
-        String errorBold = htmlErrorPage.errorBold();
-        if (error != null || errorBold != null) {
+        if (htmlErrorPage.error() != null || htmlErrorPage.errorBold() != null) {
             sb.append("<p>");
-            if (errorBold != null) {
-                sb.append("<strong>");
-                sb.append(errorBold);
-                sb.append("</strong>. ");
+            if (htmlErrorPage.errorBold() != null) {
+                sb.append("<strong>").append(htmlErrorPage.errorBold()).append("</strong>. ");
             }
-            if (error != null) {
-                sb.append(error);
-                sb.append(".");
+            if (htmlErrorPage.error() != null) {
+                sb.append(htmlErrorPage.error()).append(".");
             }
             sb.append("</p>");
         }
         return sb.toString();
     }
 
-    @Override
-    public String body(ErrorContext errorContext, HttpResponse<?> response) {
-        HtmlErrorPage key = error(errorContext, response);
-        try {
-            return html(key, errorContext);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private HtmlErrorPage error(ErrorContext errorContext, HttpResponse<?> response) {
-        int httpStatusCode = response.code();
-        Locale locale = localeResolver.resolveOrDefault(errorContext.getRequest());
-        final String errorBoldCode = httpStatusCode + ".error.bold";
-        final String errorCode = httpStatusCode + ".error";
-        String defaultErrorBold = DEFAULT_ERROR_BOLD.get(httpStatusCode);
-        String defaultError = DEFAULT_ERROR.get(httpStatusCode);
-        String errorBold = defaultErrorBold != null
-                ? messageSource.getMessage(errorBoldCode, defaultErrorBold, locale)
-                : messageSource.getMessage(errorBoldCode, locale).orElse(null);
-        String error = defaultError != null
-                ? messageSource.getMessage(errorCode, defaultError, locale)
-                : messageSource.getMessage(errorCode, locale).orElse(null);
-        String httpStatusReason = htmlSanitizer.sanitize(response.reason());
-
-        return new HtmlErrorPage(locale, httpStatusCode, httpStatusReason, error, errorBold);
-    }
-
-
     private Optional<StackTraceElement> parseStackTraceLine(String line) {
         try {
             if (!line.startsWith("at ")) return Optional.empty();
             line = line.substring(3);
+
             int openParen = line.indexOf('(');
             int closeParen = line.indexOf(')');
-
             if (openParen == -1 || closeParen == -1) return Optional.empty();
 
             String methodInfo = line.substring(0, openParen);
@@ -511,68 +674,80 @@ class DefaultHtmlProvider implements HtmlErrorResponseBodyProvider {
         }
     }
 
- private String getCodeSnippetFromElement(StackTraceElement element) {
-     try {
-         String className = element.getClassName();
-         int lineNumber = element.getLineNumber();
-         if (lineNumber < 0) return null;
+    private String getCodeFromElement(StackTraceElement element) {
+        try {
+            int lineNumber = element.getLineNumber();
+            if (lineNumber < 0) return null;
 
-         Path path = getPathFromClass(className);
+            Path path = getPathFromClass(element.getClassName());
+            if (!Files.exists(path)) return null;
 
-         if (Files.exists(path)) {
-             try (BufferedReader reader = Files.newBufferedReader(path)) {
-                 String line;
-                 int currentLine = 1;
-                 StringBuilder codeSnippet = new StringBuilder();
-                 boolean foundStartIndex = false;
+            return readCodeSnippet(path, lineNumber);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
 
-                 codeSnippet.append("<div class=\"code-snippet\">");
-                 codeSnippet.append("<div style=\"margin-bottom:5px;\"><strong>")
-                         .append(path.getFileName())
-                         .append("</strong></div>");
+    private String readCodeSnippet(Path path, int lineNumber) throws IOException {
+        try (BufferedReader reader = Files.newBufferedReader(path)) {
+            StringBuilder codeHtml = new StringBuilder();
+            String line;
+            int currentLine = 1;
+            int startLine = Math.max(1, lineNumber - 3);
+            int endLine = lineNumber + 2;
 
-                 while ((line = reader.readLine()) != null) {
-                     if (currentLine >= lineNumber - 3 && !foundStartIndex) {
-                         foundStartIndex = true;
-                     }
+            while ((line = reader.readLine()) != null) {
+                if (currentLine >= startLine && currentLine <= endLine) {
+                    String cssClass = currentLine == lineNumber ? "highlighted-line" : "code-line";
+                    codeHtml.append("<div class=\"").append(cssClass).append("\">")
+                            .append("<span class=\"line-number\">").append(currentLine).append("</span> ")
+                            .append(line)
+                            .append("</div>");
+                }
+                if (currentLine > endLine) break;
+                currentLine++;
+            }
+            return codeHtml.toString();
+        }
+    }
 
-                     if (foundStartIndex) {
-                         if (currentLine == lineNumber) {
-                             codeSnippet.append("<div class=\"highlighted-line\">");
-                         } else {
-                             codeSnippet.append("<div class=\"code-line\">");
-                         }
-                         codeSnippet.append("<span class=\"line-number\">")
-                                 .append(String.format("%d", currentLine))
-                                 .append("</span> ")
-                                 .append(line)
-                                 .append("</div>");
-                     }
-
-                     currentLine++;
-                 }
-
-                 codeSnippet.append("</div>\n\n");
-                 return codeSnippet.toString();
-             }
-         }
-     } catch (Exception ignored) {
-
-     }
-     return null;
- }
-
-//get Path of file by className
     private Path getPathFromClass(String className) {
         String relativePath = className.replace('.', '/') + ".java";
         return Paths.get("src/main/java", relativePath);
     }
 
-    private record HtmlErrorPage(Locale locale,
-                                 int httpStatusCode,
-                                 String httpStatusReason,
-                                 String error,
-                                 String errorBold
-    ) {
+    private String buildJsonResponseSection(ErrorContext errorContext, HttpResponse<?> response) {
+        if (errorContext == null) return "";
+
+        try {
+            JsonError jsonBody = jsonErrorResponseBodyProvider.body(errorContext, response);
+            String jsonString = objectMapper.writeValueAsString(jsonBody);
+
+            return "<div class=\"json-response-section\">" +
+                    "<div class=\"stacktrace-header collapsible\">JSON Response <span class=\"toggle-icon\">▼</span></div>" +
+                    "<div class=\"stacktrace-content\">" +
+                    "<pre style=\"white-space: pre-wrap; overflow-x: auto;\">" +
+                    htmlSanitizer.sanitize(jsonString) +
+                    "</pre>" +
+                    "</div>" +
+                    "</div>";
+        } catch (Exception ignored) {
+            return "";
+        }
     }
+
+    private record HtmlErrorPage(
+            Locale locale,
+            int httpStatusCode,
+            String httpStatusReason,
+            String error,
+            String errorBold
+    ) {}
+
+    private record CodeSnippet(
+            String className,
+            String fileName,
+            int lineNumber,
+            String codeHtml
+    ) {}
 }
