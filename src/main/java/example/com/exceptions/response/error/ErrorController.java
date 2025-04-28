@@ -17,7 +17,6 @@ public class ErrorController {
     public  void create(HttpRequest request, HttpResponse<?> response) {
 
     }
-    //Bad request 400
 
 
 }
